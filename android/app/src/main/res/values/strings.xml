@@ -1,0 +1,7 @@
+<?xml version='1.0' encoding='utf-8'?>
+<resources>
+    <string name="app_name">Post Minit</string>
+    <string name="title_activity_main">Post Minit</string>
+    <string name="package_name">com.postminit.app</string>
+    <string name="custom_url_scheme">com.postminit.app</string>
+</resources>
