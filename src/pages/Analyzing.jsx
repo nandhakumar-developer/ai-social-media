@@ -1,119 +1,159 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
+
+const STEPS = [
+  'Reading your media...',
+  'Understanding visual context...',
+  'Crafting platform-native copy...',
+  'Applying tone & style...',
+  'Finalising captions...',
+];
 
 export default function Analyzing() {
   const navigate = useNavigate();
   const location = useLocation();
+  const ran = useRef(false);
 
   useEffect(() => {
-    const { base64, mimeType, tone, platforms, fileUrl, fileName } = location.state || {};
+    if (ran.current) return;
+    ran.current = true;
+
+    const { base64, mimeType, tone, platforms, lines, fileName } = location.state || {};
     const apiKey = import.meta.env.VITE_GEMINI_API_KEY;
 
     const runAnalysis = async () => {
+      const activePlatforms = platforms
+        ? Object.keys(platforms).filter(k => platforms[k])
+        : ['linkedin', 'instagram'];
+      const activeTone = tone || 'Professional';
+      const lineCount = lines || 10;
+
+      const platformInstructions = {
+        linkedin: 'LinkedIn: Professional hook, 2-3 insight paragraphs, bullet points, CTA, hashtags',
+        instagram: 'Instagram: Aesthetic vibe, emojis woven in, line breaks for breathing room, hashtag block at end',
+        facebook: 'Facebook: Conversational, story-telling, approachable, CTA, 2-3 paragraphs',
+        whatsapp: 'WhatsApp: Short, punchy, uses bold (*word*) formatting, friendly emojis, no hashtags',
+        mail: 'Email: Proper Subject line on first line prefixed "Subject:", professional greeting, body paragraphs, sign-off "Best regards, [Name]"',
+      };
+
+      const platformGuide = activePlatforms
+        .map(p => platformInstructions[p] || p)
+        .join('\n');
+
+      const prompt = `You are a world-class social media copywriter and content strategist.
+
+I am giving you a piece of media. Analyze every visual detail — colors, mood, objects, people, lighting, composition, text in the image.
+
+Based on those SPECIFIC visual details, generate a unique, engaging post for EACH of these platforms:
+${platformGuide}
+
+Rules:
+1. Each post MUST be approximately ${lineCount} lines long (count actual lines, not paragraphs).
+2. Tone MUST be exactly: "${activeTone}" throughout.
+3. NEVER say "In this image", "The photo shows", or "Attached". Write as the original creator.
+4. Include strategic emojis matching the "${activeTone}" tone.
+5. Include 4-6 relevant trending hashtags where appropriate for the platform.
+6. Make every post feel authentically native to its platform.
+7. For email: always start with "Subject: [subject line]" on the very first line.
+
+Return ONLY a valid JSON object. Keys must be exactly: ${activePlatforms.join(', ')}.
+Values must be the complete post text as a string. No markdown fences, no extra keys.`;
+
       if (!apiKey || !base64) {
-        // Fallback simulated delay
+        // No API key — use mock fallback
         setTimeout(() => {
           navigate('/results', { state: location.state });
-        }, 4000);
+        }, 3000);
         return;
       }
 
-      const activePlatforms = platforms ? Object.keys(platforms).filter(k => platforms[k]) : ['linkedin', 'instagram'];
-      const activeTone = tone || 'Professional';
-
-      // Advanced Gemini Vision Call
-      const prompt = `You are a world-class social media manager and master copywriter. I am giving you an image.
-Analyze the EXACT visual details (colors, objects, mood, lighting, structure) of this image deeply. 
-
-Based strictly on those actual visual details, generate a substantial, highly engaging, trendy, viral social media post explicitly tailored for each of these platforms: ${activePlatforms.join(', ')}.
-The precise tone of the text MUST be exactly: "${activeTone}".
-
-Rules for the generation:
-1. Describe SPECIFIC elements from the image organically. If there are gradients, neon lights, people, or text, explicitly weave them into the narrative.
-2. The posts must be VERY LONG and DETAILED (at least 3-4 distinct paragraphs). Give the posts breathing room using empty line breaks.
-3. NEVER use phrases like "In this photo", "The image shows", or "Attached is". Speak perfectly organically as the original creator of whatever is shown.
-4. Include strategic, highly relevant emojis that match the "${activeTone}" tone.
-5. Include 4 to 6 trending, niche hashtags at the bottom of the post.
-6. The structure MUST be platform-native (e.g., LinkedIn uses profound hooks and bullet points; Instagram uses aesthetic vibes and spacing; Twitter is punchy).
-
-Return the final output strictly as JSON.
-The JSON object keys MUST precisely match the requested platforms: ${activePlatforms.join(', ')}. The JSON values must be the completed string of text for that platform.`;
-
       try {
-        const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${apiKey}`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            contents: [{
-              parts: [
-                { text: prompt },
-                { inlineData: { mimeType: mimeType || "image/jpeg", data: base64 } }
-              ]
-            }],
-            generationConfig: {
-              responseMimeType: "application/json"
-            }
-          })
-        });
+        const res = await fetch(
+          `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${apiKey}`,
+          {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              contents: [{
+                parts: [
+                  { text: prompt },
+                  { inlineData: { mimeType: mimeType || 'image/jpeg', data: base64 } }
+                ]
+              }],
+              generationConfig: { responseMimeType: 'application/json' }
+            })
+          }
+        );
 
-        if (!response.ok) {
-           const errText = await response.text();
-           throw new Error(`API request failed: ${response.status} ${errText}`);
+        if (!res.ok) {
+          const errText = await res.text();
+          throw new Error(`Gemini API error ${res.status}: ${errText}`);
         }
-        
-        const data = await response.json();
-        const jsonString = data.candidates[0].content.parts[0].text;
-        const aiResults = JSON.parse(jsonString);
 
+        const data = await res.json();
+        const raw = data.candidates[0].content.parts[0].text;
+        const aiResults = JSON.parse(raw);
         navigate('/results', { state: { ...location.state, aiResults } });
-
       } catch (e) {
-        console.error("AI Generation failed, falling back to mock generator:", e);
-        alert("Gemini AI API Failed:\n" + e.message + "\n\nFalling back to simulated data. Please ensure your API key is valid and you have restarted the dev server.");
-        // Fallback to local mock generator
-        navigate('/results', { state: location.state });
+        console.error('Gemini failed:', e);
+        navigate('/results', { state: { ...location.state, geminiError: e.message } });
       }
     };
 
     runAnalysis();
-  }, [navigate, location.state]);
+  }, []);
 
   return (
-    <main className="min-h-[calc(100vh-140px)] flex flex-col items-center justify-center relative px-4 md:px-6 overflow-hidden">
-      
-      <div className="absolute inset-0 pointer-events-none overflow-hidden">
-        <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-[300px] h-[300px] md:w-[500px] md:h-[500px] bg-primary/10 rounded-full ai-pulse-glow"></div>
+    <main className="min-h-[calc(100vh-140px)] flex flex-col items-center justify-center px-4 relative overflow-hidden">
+
+      {/* Pulsing orb */}
+      <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
+        <div className="w-[400px] h-[400px] rounded-full opacity-20"
+          style={{
+            background: 'radial-gradient(circle, #cc97ff 0%, transparent 70%)',
+            animation: 'pulse-orb 4s ease-in-out infinite'
+          }} />
       </div>
-      
-      <div className="relative z-10 flex flex-col items-center max-w-2xl w-full">
-        <div className="relative w-32 h-32 md:w-48 md:h-48 mb-8 md:mb-12 flex items-center justify-center">
-          
-          <div className="absolute inset-0 rounded-full border border-primary/20 scale-110"></div>
-          
-          <div className="absolute inset-4 rounded-full bg-gradient-to-tr from-primary to-primary-container opacity-20 blur-xl"></div>
-          
-          <div className="relative w-24 h-24 md:w-32 md:h-32 rounded-full bg-gradient-to-br from-primary via-primary-container to-secondary shadow-[0_0_50px_rgba(204,151,255,0.4)] flex items-center justify-center overflow-hidden">
-            <div className="absolute inset-0 bg-[radial-gradient(circle_at_center,_transparent_0%,_rgba(0,0,0,0.4)_100%)]"></div>
-            <span className="material-symbols-outlined text-on-primary-fixed text-4xl md:text-5xl" style={{ fontVariationSettings: "'FILL' 1" }}>blur_on</span>
-            <div className="absolute left-0 right-0 h-1/2 bg-gradient-to-b from-transparent via-white/40 to-transparent scan-line"></div>
+
+      <div className="relative z-10 flex flex-col items-center max-w-sm w-full text-center">
+
+        {/* Animated icon */}
+        <div className="relative w-28 h-28 mb-8 flex items-center justify-center">
+          <div className="absolute inset-0 rounded-full border border-[#cc97ff]/20 animate-ping opacity-30" />
+          <div className="absolute inset-2 rounded-full border border-[#cc97ff]/10" />
+          <div className="w-20 h-20 rounded-full flex items-center justify-center overflow-hidden relative"
+            style={{ background: 'linear-gradient(135deg, #cc97ff 0%, #c284ff 100%)', boxShadow: '0 0 50px rgba(204,151,255,0.4)' }}>
+            <span className="material-symbols-outlined text-white text-4xl" style={{ fontVariationSettings: "'FILL' 1" }}>blur_on</span>
+            {/* Scan line */}
+            <div className="absolute left-0 right-0 h-8 bg-gradient-to-b from-transparent via-white/30 to-transparent scan-line" />
           </div>
         </div>
-        
-        <div className="text-center space-y-2 md:space-y-4">
-          <h2 className="font-headline text-2xl md:text-5xl font-extrabold tracking-tight text-on-background">
-            AI is analyzing your content<span className="text-primary animate-pulse">...</span>
-          </h2>
-          <p className="font-body text-on-surface-variant max-w-md mx-auto text-sm md:text-lg">
-            Decoding complex patterns and synthesizing unique insights just for you.
-          </p>
-          {!import.meta.env.VITE_GEMINI_API_KEY && (
-            <p className="font-label text-xs text-secondary mt-2 border border-secondary/20 bg-secondary/10 px-3 py-1 rounded-md max-w-sm mx-auto">
-              Simulated Mode: Add VITE_GEMINI_API_KEY to .env for real AI vision tracking.
-            </p>
-          )}
+
+        <h2 className="font-['Manrope'] text-2xl md:text-4xl font-extrabold tracking-tight text-white mb-3">
+          AI is crafting your captions<span className="text-[#cc97ff] animate-pulse">...</span>
+        </h2>
+        <p className="text-[#acaaad] text-sm md:text-base max-w-xs">
+          Analyzing your media and generating platform-native content tailored just for you.
+        </p>
+
+        {/* Animated steps */}
+        <div className="mt-8 space-y-2 w-full max-w-xs">
+          {STEPS.map((step, i) => (
+            <div key={step} className="flex items-center gap-3 opacity-0"
+              style={{ animation: `fadeInStep 0.5s ease forwards ${i * 0.8}s` }}>
+              <div className="w-1.5 h-1.5 rounded-full bg-[#cc97ff] flex-shrink-0" />
+              <span className="text-[#acaaad] text-xs text-left">{step}</span>
+            </div>
+          ))}
         </div>
       </div>
-      
+
+      <style>{`
+        @keyframes fadeInStep {
+          from { opacity: 0; transform: translateX(-10px); }
+          to { opacity: 1; transform: translateX(0); }
+        }
+      `}</style>
     </main>
   );
 }
