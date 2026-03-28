@@ -19,7 +19,6 @@ export default function Analyzing() {
     ran.current = true;
 
     const { base64, mimeType, tone, platforms, lines, fileName } = location.state || {};
-    const apiKey = import.meta.env.VITE_GEMINI_API_KEY;
 
     const runAnalysis = async () => {
       const activePlatforms = platforms
@@ -40,9 +39,31 @@ export default function Analyzing() {
         .map(p => platformInstructions[p] || p)
         .join('\n');
 
-      const prompt = `You are a world-class social media copywriter and content strategist.
+      // If no media uploaded, use mock fallback
+      if (!base64) {
+        setTimeout(() => {
+          navigate('/results', { state: location.state });
+        }, 3000);
+        return;
+      }
 
-I am giving you a piece of media. Analyze every visual detail — colors, mood, objects, people, lighting, composition, text in the image.
+      try {
+        // Build messages array for puter.js — supports vision (image + text)
+        const messages = [
+          {
+            role: 'user',
+            content: [
+              {
+                type: 'image_url',
+                image_url: {
+                  url: `data:${mimeType || 'image/jpeg'};base64,${base64}`,
+                },
+              },
+              {
+                type: 'text',
+                text: `You are a world-class social media copywriter and content strategist.
+
+Analyze every visual detail of this image — colors, mood, objects, people, lighting, composition, any text visible.
 
 Based on those SPECIFIC visual details, generate a unique, engaging post for EACH of these platforms:
 ${platformGuide}
@@ -57,45 +78,36 @@ Rules:
 7. For email: always start with "Subject: [subject line]" on the very first line.
 
 Return ONLY a valid JSON object. Keys must be exactly: ${activePlatforms.join(', ')}.
-Values must be the complete post text as a string. No markdown fences, no extra keys.`;
+Values must be the complete post text as a string. No markdown fences, no extra keys.`,
+              },
+            ],
+          },
+        ];
 
-      if (!apiKey || !base64) {
-        // No API key — use mock fallback
-        setTimeout(() => {
-          navigate('/results', { state: location.state });
-        }, 3000);
-        return;
-      }
+        // Use puter.js AI — gpt-4o supports vision
+        const response = await puter.ai.chat(messages, {
+          model: 'gpt-4o',
+        });
 
-      try {
-        const res = await fetch(
-          `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${apiKey}`,
-          {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-              contents: [{
-                parts: [
-                  { text: prompt },
-                  { inlineData: { mimeType: mimeType || 'image/jpeg', data: base64 } }
-                ]
-              }],
-              generationConfig: { responseMimeType: 'application/json' }
-            })
-          }
-        );
-
-        if (!res.ok) {
-          const errText = await res.text();
-          throw new Error(`Gemini API error ${res.status}: ${errText}`);
+        // puter.js returns response.message.content (string) or response.toString()
+        let raw = '';
+        if (typeof response === 'string') {
+          raw = response;
+        } else if (response?.message?.content) {
+          raw = response.message.content;
+        } else if (response?.content) {
+          raw = response.content;
+        } else {
+          raw = String(response);
         }
 
-        const data = await res.json();
-        const raw = data.candidates[0].content.parts[0].text;
+        // Strip markdown code fences if present
+        raw = raw.replace(/```json\s*/gi, '').replace(/```\s*/gi, '').trim();
+
         const aiResults = JSON.parse(raw);
         navigate('/results', { state: { ...location.state, aiResults } });
       } catch (e) {
-        console.error('Gemini failed:', e);
+        console.error('Puter AI failed:', e);
         navigate('/results', { state: { ...location.state, geminiError: e.message } });
       }
     };

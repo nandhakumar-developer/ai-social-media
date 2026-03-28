@@ -1,16 +1,19 @@
 import { useEffect, useState } from 'react';
+import { useNavigate } from 'react-router-dom';
 
 const PLATFORM_META = {
-  linkedin:  { label: 'LinkedIn',  color: '#0077b5' },
-  instagram: { label: 'Instagram', color: '#e4405f' },
-  facebook:  { label: 'Facebook',  color: '#1877f2' },
-  whatsapp:  { label: 'WhatsApp',  color: '#25d366' },
-  mail:      { label: 'Email',     color: '#f59e0b' },
+  linkedin:  { label: 'LinkedIn',  icon: 'work',              color: '#0077b5', bg: 'rgba(0,119,181,0.12)' },
+  instagram: { label: 'Instagram', icon: 'camera',            color: '#e4405f', bg: 'rgba(228,64,95,0.12)' },
+  facebook:  { label: 'Facebook',  icon: 'social_leaderboard',color: '#1877f2', bg: 'rgba(24,119,242,0.12)' },
+  whatsapp:  { label: 'WhatsApp',  icon: 'chat',              color: '#25d366', bg: 'rgba(37,211,102,0.12)' },
+  mail:      { label: 'Email',     icon: 'mail',              color: '#f59e0b', bg: 'rgba(245,158,11,0.12)' },
 };
 
 export default function History() {
+  const navigate = useNavigate();
   const [history, setHistory] = useState([]);
   const [search, setSearch] = useState('');
+  const [expandedId, setExpandedId] = useState(null);
 
   useEffect(() => {
     try {
@@ -26,12 +29,44 @@ export default function History() {
     }
   };
 
+  const deleteItem = (id, e) => {
+    e.stopPropagation();
+    const updated = history.filter(item => item.id !== id);
+    setHistory(updated);
+    localStorage.setItem('captivai_history', JSON.stringify(updated));
+  };
+
   const timeAgo = (dateStr) => {
     const diff = Math.floor((Date.now() - new Date(dateStr)) / 1000);
     if (diff < 60) return 'Just now';
     if (diff < 3600) return `${Math.floor(diff / 60)}m ago`;
     if (diff < 86400) return `${Math.floor(diff / 3600)}h ago`;
     return `${Math.floor(diff / 86400)}d ago`;
+  };
+
+  const handleCopy = async (text, e) => {
+    e.stopPropagation();
+    try {
+      await navigator.clipboard.writeText(text);
+    } catch { /* ignore */ }
+  };
+
+  const handleReuse = (item) => {
+    // Navigate to results with saved data to reuse a history entry
+    if (item.aiResults) {
+      navigate('/results', {
+        state: {
+          base64: item.base64?.split(',')[1],
+          mimeType: item.mimeType,
+          fileName: item.imageName,
+          tone: item.tone,
+          platforms: item.platforms
+            ? Object.fromEntries(item.platforms.map(p => [p, true]))
+            : { linkedin: true, instagram: true },
+          aiResults: item.aiResults,
+        }
+      });
+    }
   };
 
   const filtered = history.filter(item =>
@@ -91,36 +126,125 @@ export default function History() {
             </p>
           </div>
         ) : (
-          filtered.map(item => (
-            <div
-              key={item.id}
-              className="group flex items-center gap-4 bg-white/[0.03] border border-white/5 p-4 rounded-2xl hover:bg-white/[0.06] transition-all cursor-pointer"
-            >
-              {/* Thumbnail */}
-              <div className="w-14 h-14 rounded-xl overflow-hidden flex-shrink-0 bg-white/5 flex items-center justify-center">
-                {item.base64 && !item.mimeType?.includes('video') && !item.mimeType?.includes('pdf') ? (
-                  <img src={item.base64} alt={item.imageName} className="w-full h-full object-cover group-hover:scale-110 transition-transform duration-500" />
-                ) : item.mimeType?.includes('video') ? (
-                  <span className="material-symbols-outlined text-[#67e8f9]" style={{ fontVariationSettings: "'FILL' 1" }}>movie</span>
-                ) : (
-                  <span className="material-symbols-outlined text-[#fda4af]" style={{ fontVariationSettings: "'FILL' 1" }}>description</span>
+          filtered.map(item => {
+            const isExpanded = expandedId === item.id;
+            const platformKeys = item.platforms || [];
+
+            return (
+              <div
+                key={item.id}
+                className="group bg-white/[0.03] border border-white/5 rounded-2xl overflow-hidden transition-all hover:bg-white/[0.05]"
+              >
+                {/* Main row */}
+                <div
+                  className="flex items-center gap-4 p-4 cursor-pointer"
+                  onClick={() => setExpandedId(isExpanded ? null : item.id)}
+                >
+                  {/* Thumbnail */}
+                  <div className="w-14 h-14 rounded-xl overflow-hidden flex-shrink-0 bg-white/5 flex items-center justify-center">
+                    {item.base64 && !item.mimeType?.includes('video') && !item.mimeType?.includes('pdf') ? (
+                      <img src={item.base64} alt={item.imageName} className="w-full h-full object-cover group-hover:scale-110 transition-transform duration-500" />
+                    ) : item.mimeType?.includes('video') ? (
+                      <span className="material-symbols-outlined text-[#67e8f9]" style={{ fontVariationSettings: "'FILL' 1" }}>movie</span>
+                    ) : (
+                      <span className="material-symbols-outlined text-[#fda4af]" style={{ fontVariationSettings: "'FILL' 1" }}>description</span>
+                    )}
+                  </div>
+
+                  {/* Info */}
+                  <div className="flex-grow min-w-0">
+                    <div className="flex items-center gap-2 mb-0.5 flex-wrap">
+                      <span className="px-2 py-0.5 rounded-full text-[9px] font-bold uppercase tracking-wide"
+                        style={{ background: 'rgba(204,151,255,0.15)', color: '#cc97ff' }}>
+                        {item.tone || 'General'}
+                      </span>
+                      <span className="text-[#acaaad] text-[10px]">{timeAgo(item.timestamp)}</span>
+                    </div>
+                    <p className="text-white font-bold text-sm truncate">{item.imageName}</p>
+                    <p className="text-[#acaaad] text-xs truncate mt-0.5">"{item.contentSnippet}"</p>
+
+                    {/* Platform chips */}
+                    {platformKeys.length > 0 && (
+                      <div className="flex gap-1 mt-2 flex-wrap">
+                        {platformKeys.map(p => {
+                          const meta = PLATFORM_META[p];
+                          if (!meta) return null;
+                          return (
+                            <span key={p} className="flex items-center gap-1 px-2 py-0.5 rounded-full text-[9px] font-bold"
+                              style={{ background: meta.bg, color: meta.color }}>
+                              <span className="material-symbols-outlined text-[10px]" style={{ fontVariationSettings: "'FILL' 1" }}>{meta.icon}</span>
+                              {meta.label}
+                            </span>
+                          );
+                        })}
+                      </div>
+                    )}
+                  </div>
+
+                  {/* Controls */}
+                  <div className="flex gap-1 flex-shrink-0">
+                    {item.aiResults && (
+                      <button
+                        onClick={e => { e.stopPropagation(); handleReuse(item); }}
+                        className="w-8 h-8 rounded-lg bg-[#cc97ff]/10 hover:bg-[#cc97ff]/20 flex items-center justify-center transition-all active:scale-95"
+                        title="View results">
+                        <span className="material-symbols-outlined text-[#cc97ff] text-xs">open_in_new</span>
+                      </button>
+                    )}
+                    <button
+                      onClick={e => deleteItem(item.id, e)}
+                      className="w-8 h-8 rounded-lg bg-white/5 hover:bg-[#fda4af]/10 flex items-center justify-center transition-all active:scale-95"
+                      title="Delete">
+                      <span className="material-symbols-outlined text-[#acaaad] hover:text-[#fda4af] text-xs">delete</span>
+                    </button>
+                    <div className="w-8 h-8 rounded-lg bg-white/5 flex items-center justify-center">
+                      <span className="material-symbols-outlined text-[#acaaad] text-xs transition-transform duration-200"
+                        style={{ transform: isExpanded ? 'rotate(180deg)' : 'rotate(0deg)' }}>
+                        expand_more
+                      </span>
+                    </div>
+                  </div>
+                </div>
+
+                {/* Expanded: show all generated captions */}
+                {isExpanded && item.aiResults && (
+                  <div className="border-t border-white/5 px-4 pb-4 pt-3 space-y-3">
+                    {Object.entries(item.aiResults).map(([platform, content]) => {
+                      const meta = PLATFORM_META[platform] || {};
+                      return (
+                        <div key={platform} className="rounded-xl border border-white/5 bg-white/[0.03] overflow-hidden">
+                          <div className="flex items-center justify-between px-3 py-2 border-b border-white/5">
+                            <div className="flex items-center gap-2">
+                              <div className="w-5 h-5 rounded-md flex items-center justify-center" style={{ background: meta.bg }}>
+                                <span className="material-symbols-outlined text-[10px]" style={{ color: meta.color, fontVariationSettings: "'FILL' 1" }}>{meta.icon}</span>
+                              </div>
+                              <span className="text-white font-bold text-xs">{meta.label || platform}</span>
+                            </div>
+                            <button
+                              onClick={e => handleCopy(content, e)}
+                              className="flex items-center gap-1 px-2 py-1 rounded-lg bg-white/5 hover:bg-white/10 text-[#acaaad] text-[10px] transition-all active:scale-95">
+                              <span className="material-symbols-outlined text-[10px]">content_copy</span>
+                              Copy
+                            </button>
+                          </div>
+                          <pre className="text-[#acaaad] text-xs leading-relaxed whitespace-pre-wrap font-sans break-words px-3 py-2.5 max-h-32 overflow-y-auto hide-scrollbar">
+                            {content}
+                          </pre>
+                        </div>
+                      );
+                    })}
+                  </div>
+                )}
+
+                {/* Expanded but no aiResults — show snippet */}
+                {isExpanded && !item.aiResults && (
+                  <div className="border-t border-white/5 px-4 pb-4 pt-3">
+                    <p className="text-[#acaaad] text-xs leading-relaxed">{item.contentSnippet}</p>
+                  </div>
                 )}
               </div>
-
-              {/* Info */}
-              <div className="flex-grow min-w-0">
-                <div className="flex items-center gap-2 mb-0.5">
-                  <span className="px-2 py-0.5 rounded-full text-[9px] font-bold uppercase tracking-wide"
-                    style={{ background: 'rgba(204,151,255,0.15)', color: '#cc97ff' }}>
-                    {item.tone || 'General'}
-                  </span>
-                  <span className="text-[#acaaad] text-[10px]">{timeAgo(item.timestamp)}</span>
-                </div>
-                <p className="text-white font-bold text-sm truncate">{item.imageName}</p>
-                <p className="text-[#acaaad] text-xs truncate mt-0.5">"{item.contentSnippet}"</p>
-              </div>
-            </div>
-          ))
+            );
+          })
         )}
       </div>
 
