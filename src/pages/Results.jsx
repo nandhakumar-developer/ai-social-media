@@ -9,6 +9,20 @@ const PLATFORM_META = {
   mail:      { label: 'Email',     icon: 'mail',              color: '#f59e0b', bg: 'rgba(245,158,11,0.12)' },
 };
 
+// Deep-link share URLs for each platform (text only; native share handles files)
+const PLATFORM_SHARE_URLS = {
+  linkedin:  (text) => `https://www.linkedin.com/sharing/share-offsite/?summary=${encodeURIComponent(text)}`,
+  facebook:  (text) => `https://www.facebook.com/sharer/sharer.php?quote=${encodeURIComponent(text)}&u=https://captivai.app`,
+  whatsapp:  (text) => `https://api.whatsapp.com/send?text=${encodeURIComponent(text)}`,
+  mail:      (text) => {
+    const lines = text.split('\n');
+    const subject = lines[0].startsWith('Subject:') ? lines[0].replace('Subject:', '').trim() : 'Check this out';
+    const body = lines.slice(1).join('\n').trim();
+    return `mailto:?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(body)}`;
+  },
+  instagram: null, // Instagram has no web share URL; use native share
+};
+
 function mockCaption(platform, tone, lines) {
   const n = lines || 10;
   const t = (tone || 'professional').toLowerCase();
@@ -33,6 +47,7 @@ export default function Results() {
 
   const [copiedKey, setCopiedKey] = useState(null);
   const [activeTab, setActiveTab] = useState(activePlatforms[0]);
+  const [shareStatus, setShareStatus] = useState('');
 
   const generatedContent = useMemo(() =>
     activePlatforms.map(p => ({
@@ -42,7 +57,7 @@ export default function Results() {
     [activePlatforms, aiResults, activeTone, lines]
   );
 
-  // Save to history
+  // Save to history (localStorage)
   useEffect(() => {
     if (!generatedContent.length) return;
     const historyItem = {
@@ -52,6 +67,8 @@ export default function Results() {
       imageName: fileName || 'Untitled',
       base64: base64 ? `data:${mimeType};base64,${base64}` : null,
       mimeType,
+      platforms: activePlatforms,
+      aiResults: aiResults || null,
       contentSnippet: generatedContent[0]?.content.substring(0, 90) + '...'
     };
     try {
@@ -70,35 +87,60 @@ export default function Results() {
       await navigator.clipboard.writeText(text);
       setCopiedKey(key);
       setTimeout(() => setCopiedKey(null), 2000);
-    } catch { alert('Could not copy. Please copy manually.'); }
+    } catch {
+      alert('Could not copy. Please copy manually.');
+    }
+  };
+
+  // Build a File object from the uploaded media for native share
+  const buildMediaFile = async () => {
+    if (!fileUrl) return null;
+    try {
+      const res = await fetch(fileUrl);
+      const blob = await res.blob();
+      const file = new File([blob], fileName || 'media', { type: blob.type });
+      if (navigator.canShare?.({ files: [file] })) return file;
+    } catch { /* ignore */ }
+    return null;
   };
 
   const handleShare = async (text, platform) => {
+    setShareStatus('sharing');
     try {
-      let filesArray = [];
-      if (fileUrl) {
-        try {
-          const res = await fetch(fileUrl);
-          const blob = await res.blob();
-          const file = new File([blob], fileName || 'media', { type: blob.type });
-          if (navigator.canShare?.({ files: [file] })) filesArray = [file];
-        } catch { /* skip file */ }
-      }
-
+      // Try native Web Share API first (supports files on mobile)
       if (navigator.share) {
-        await navigator.share({
+        const mediaFile = await buildMediaFile();
+        const shareData = {
           title: `CaptivAI – ${PLATFORM_META[platform]?.label || platform}`,
           text,
-          ...(filesArray.length ? { files: filesArray } : {})
-        });
+          ...(mediaFile ? { files: [mediaFile] } : {}),
+        };
+        await navigator.share(shareData);
+        setShareStatus('');
+        return;
+      }
+
+      // Desktop fallback: use platform deep-link or mailto
+      const urlBuilder = PLATFORM_SHARE_URLS[platform];
+      if (urlBuilder) {
+        const url = urlBuilder(text);
+        window.open(url, '_blank', 'noopener,noreferrer');
       } else {
-        // Desktop fallback: copy + notify
+        // Instagram or unknown — copy + notify
         await navigator.clipboard.writeText(text);
-        alert('Copied to clipboard! Paste it into your platform.');
+        alert('Caption copied! Open Instagram and paste it into your post.');
       }
     } catch (err) {
-      if (err.name !== 'AbortError') console.warn(err);
+      if (err.name !== 'AbortError') {
+        // Fallback: copy to clipboard
+        try {
+          await navigator.clipboard.writeText(text);
+          setCopiedKey(platform + '_share');
+          setTimeout(() => setCopiedKey(null), 2000);
+        } catch { /* ignore */ }
+      }
     }
+    setShareStatus('');
   };
 
   const handleShareAll = async () => {
@@ -132,9 +174,14 @@ export default function Results() {
             </button>
             <button
               onClick={handleShareAll}
-              className="flex items-center gap-2 px-4 py-2 rounded-xl text-sm font-bold transition-all active:scale-95"
+              disabled={shareStatus === 'sharing'}
+              className="flex items-center gap-2 px-4 py-2 rounded-xl text-sm font-bold transition-all active:scale-95 disabled:opacity-60"
               style={{ background: 'linear-gradient(135deg, #cc97ff 0%, #c284ff 100%)', color: 'white' }}>
-              <span className="material-symbols-outlined text-sm">share</span>
+              {shareStatus === 'sharing' ? (
+                <span className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin" />
+              ) : (
+                <span className="material-symbols-outlined text-sm">share</span>
+              )}
               Share All
             </button>
           </div>
